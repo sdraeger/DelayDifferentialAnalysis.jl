@@ -1,15 +1,23 @@
 """
-    run_dda_matrix(samples; device="cpu", flavors=("ST",), ...)
+    run_dda_matrix(samples; device="cpu", num_cores=1, parallelism=:threads, flavors=("ST",), ...)
 
 Run the pure Julia DDA engine on a `samples × channels` matrix. Channel and
 pair indices are 1-based. `device` accepts `"cpu"`, `"cuda"`, or `"cuda:N"`.
 CUDA.jl is loaded only when a CUDA device is requested. SY evaluates
 consecutive channel pairs `(ch₁, ch₂), (ch₃, ch₄), …`; an odd trailing
 channel is left unpaired.
+
+CPU window batches run concurrently when `num_cores > 1`. `parallelism=:threads`
+uses available Julia threads; `:processes` creates temporary local workers.
+Counts are capped at the CPU count and available work. A single CPU window
+uses threaded channel/variant solves instead. CUDA keeps its batched
+solver and requires `num_cores=1` and `parallelism=:threads`.
 """
 function run_dda_matrix(
     samples::AbstractMatrix{<:Real};
     device::AbstractString="cpu",
+    num_cores::Integer=1,
+    parallelism::Symbol=:threads,
     channels=nothing,
     flavors=("ST",),
     window_length::Int=NATIVE_WINDOW_LENGTH,
@@ -30,6 +38,13 @@ function run_dda_matrix(
     nr_exclude::Int=10,
     derivative_step::Int=1,
 )::NativeDDAResult
+    num_cores >= 1 || throw(ArgumentError("num_cores must be positive"))
+    parallelism in (:threads, :processes) || throw(ArgumentError(
+        "parallelism must be :threads or :processes",
+    ))
+    first(_parse_device(device)) == :cpu || (num_cores == 1 && parallelism == :threads) || throw(ArgumentError(
+        "num_cores and parallelism configure CPU execution; CUDA uses its batched solver",
+    ))
     ctx = _dda_context(
         samples;
         device=device,
@@ -53,18 +68,9 @@ function run_dda_matrix(
         nr_exclude=nr_exclude,
         derivative_step=derivative_step,
     )
-    first_window = 1
-    while first_window <= ctx.window_count
-        problems, references = _dda_window_batch(ctx, first_window)
-        solutions = _solve_problems(problems, ctx.device)
-        _dda_unpack!(ctx, solutions, references, first_window)
-        first_window += ctx.windows_per_batch
-    end
+    _dda_execute!(ctx, num_cores, parallelism)
     return _dda_results(ctx)
 end
-
-# Pure code motion from the former monolithic run_dda_matrix: numerics are
-# unchanged; each stage below corresponds one-to-one to the original blocks.
 
 function _dda_context(
     samples;

@@ -16,10 +16,10 @@ end
 function _solve_problems(
     problems::Vector{RegressionProblem},
     device::AbstractString;
-    threaded::Bool=true,
+    num_cores::Integer=Threads.nthreads(),
 )::Vector{SolvedBlock}
     backend, device_index = _parse_device(device)
-    backend == :cpu && return threaded ? _solve_cpu_threaded(problems) : _solve_cpu(problems)
+    backend == :cpu && return _solve_cpu_threaded(problems; num_cores)
     cuda = _cuda_module()
     cuda.functional() || error("CUDA is not functional on this system")
     cuda.device!(device_index)

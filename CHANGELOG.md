@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.4.0)
+## 0.4.0
 
 ### Breaking changes
 
@@ -39,12 +39,20 @@
 ### Added
 
 - Native Julia engine (`run_dda_matrix`) for ST/CT/CD/DE/SY with optional CUDA.
+- Bounded native CPU parallelism via `num_cores` and `parallelism=:threads`
+  or `:processes`, with temporary process workers cleaned up on completion
+  or error. Complete window batches run concurrently; single-window inputs
+  parallelize independent regressions. The default is `num_cores=1`.
+- Reproducible native parallelism benchmark with serial-output parity checks.
 - `flavor_matrix(result, flavor)` as the canonical flavor accessor.
 - `OptionalDeps`-backed lazy loading: Plots, DataFrames, and CUDA are only
   loaded when used. Plots is no longer installed automatically.
 
 ### Fixed
 
+- Native scratch buffers are task-local, preventing concurrent tasks from
+  sharing mutable storage. Separate design and target buffers also prevent
+  aliasing for one-term models.
 - `Flavors.DE.name` is "Dynamical Ergodicity", matching every other surface
   (was inconsistently "Delay Embedding").
 - `generate_monomials` docstring documents its actual `Vector{Vector{Int}}`

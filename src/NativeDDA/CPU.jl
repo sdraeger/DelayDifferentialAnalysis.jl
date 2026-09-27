@@ -24,18 +24,17 @@ Threaded variant used by the engine: each regression problem is independent,
 so results are bit-identical to the sequential version regardless of thread
 count.
 """
-function _solve_cpu_threaded(problems::Vector{RegressionProblem})::Vector{SolvedBlock}
+function _solve_cpu_threaded(
+    problems::Vector{RegressionProblem}; num_cores::Integer=Threads.nthreads(),
+)::Vector{SolvedBlock}
     n = length(problems)
-    n == 0 && return SolvedBlock[]
+    count = min(num_cores, Threads.nthreads(), n)
+    count <= 1 && return _solve_cpu(problems)
     solutions = Vector{SolvedBlock}(undef, n)
-    if n == 1 || Threads.nthreads() == 1
-        @inbounds for i in 1:n
-            solutions[i] = _solve_cpu(problems[i])
+    @sync for worker in 1:count
+        Threads.@spawn for i in worker:count:n
+            @inbounds solutions[i] = _solve_cpu(problems[i])
         end
-        return solutions
-    end
-    Threads.@threads :dynamic for i in 1:n
-        @inbounds solutions[i] = _solve_cpu(problems[i])
     end
     return solutions
 end

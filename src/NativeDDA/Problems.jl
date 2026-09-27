@@ -14,14 +14,13 @@ function _evaluate_term(
     return product
 end
 
-# Per-thread scratch matrices, reused across windows so that problem
-# construction stops allocating fresh design/target arrays every time.
-# Stored problems always own a trimmed copy, never a view of the scratch.
-const _PROBLEM_SCRATCH = [Dict{Tuple{Int,Int},Matrix{Float64}}() for _ in 1:(Threads.nthreads())]
-
-@inline function _scratch_matrix(key::Tuple{Int,Int}, dims)::Matrix{Float64}
-    store = _PROBLEM_SCRATCH[Threads.threadid()]
-    return get!(store, key) do
+# Tasks may migrate between threads. Each owns its scratch; design and targets
+# must stay distinct even when their dimensions coincide (a one-term model).
+@inline function _scratch_matrix(role::Symbol, dims)::Matrix{Float64}
+    store = get!(task_local_storage(), :dda_problem_scratch) do
+        Dict{Tuple{Symbol,Tuple{Int,Int}},Matrix{Float64}}()
+    end
+    return get!(store, (role, dims)) do
         Matrix{Float64}(undef, dims)
     end
 end
@@ -35,8 +34,8 @@ function _group_problem(
     total_rows = length(channels) * window_length
     total_rows == 0 && return nothing
     n_terms = length(terms)
-    design = _scratch_matrix((total_rows, n_terms), (total_rows, n_terms))
-    target = _scratch_matrix((total_rows, 1), (total_rows, 1))
+    design = _scratch_matrix(:design, (total_rows, n_terms))
+    target = _scratch_matrix(:target, (total_rows, 1))
     tvec = @view target[:, 1]
     valid_rows = 0
 
@@ -67,8 +66,8 @@ function _directed_problem(
     window_length::Int,
 )::Union{RegressionProblem,Nothing}
     feature_count = 2length(terms)
-    design = _scratch_matrix((window_length, feature_count), (window_length, feature_count))
-    targets = _scratch_matrix((window_length, 2), (window_length, 2))
+    design = _scratch_matrix(:design, (window_length, feature_count))
+    targets = _scratch_matrix(:target, (window_length, 2))
     fit_vec = @view targets[:, 1]
     res_vec = @view targets[:, 2]
     valid_rows = 0

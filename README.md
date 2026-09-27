@@ -127,6 +127,52 @@ println(st.matrix)
 println(st.row_labels)
 ```
 
+### CPU Parallelism
+
+`num_cores=1` is the default. For larger recordings, start Julia with enough
+threads (for example, `julia --threads=8`) and parallelize complete window
+batches, including preparation, regression, and output assembly:
+
+```julia
+using LinearAlgebra
+BLAS.set_num_threads(1) # avoid nested BLAS threads inside the DDA workers
+result = run_dda_matrix(samples; num_cores=8, flavors=["ST", "CT", "CD"])
+```
+
+The worker count is capped by the CPU count and available Julia threads.
+Multiple windows are divided among workers; a single window instead
+parallelizes its independent channel/variant regressions. With a one-thread
+Julia session, this runs serially.
+Results retain their original window and channel order. Small inputs can be
+faster with one worker; parallelism also increases scratch-memory usage.
+The package does not change the calling process's BLAS settings.
+
+For process isolation, `parallelism=:processes` creates up to `num_cores`
+temporary local Julia workers, capped by the CPU count and window count:
+
+```julia
+result = run_dda_matrix(samples; num_cores=4, parallelism=:processes)
+```
+
+This does not require launching Julia with multiple threads. Workers use the
+active project, one Julia/BLAS thread each, and a copy of the input data.
+They are removed on completion or error; existing caller-owned workers are
+untouched. Startup, compilation, serialization, and extra memory make this
+unsuitable for short calls. Prefer threads unless measurements of your own
+workload justify processes. Neither mode distributes work across machines.
+
+The reproducible benchmark is `benchmark/native_parallelism.jl`; it compares
+serial execution, the previous solve-only threading strategy (`--modes legacy`),
+whole-batch threads, and processes, checking all outputs against serial results.
+For example, from this package directory:
+
+```sh
+OPENBLAS_NUM_THREADS=1 julia --project=. --threads=8 benchmark/native_parallelism.jl \
+    --modes legacy,threads --workers 1,2,4,8 --repeats 5 --output results/native_threads
+```
+
+### CUDA
+
 The CPU backend is the default. To use NVIDIA CUDA, install CUDA.jl in the
 active environment and select a device with `device="cuda"` or
 `device="cuda:0"`:
@@ -140,7 +186,8 @@ result = run_dda_matrix(samples; device="cuda:0", flavors=["ST", "CT"])
 
 CUDA.jl is optional and is loaded only for a CUDA device. Data preparation and
 flavor assembly remain on the CPU; CUDA accelerates the independent regression
-problems in batches.
+problems in batches. Keep `num_cores=1` and `parallelism=:threads` for CUDA;
+the new CPU parallelism does not launch competing workers on the same GPU.
 
 ## Structure Selection
 
